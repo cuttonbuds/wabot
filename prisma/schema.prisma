@@ -1,0 +1,158 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model WaSession {
+  id           String   @id @default("bot")
+  userId       String   @unique @default("2dddb6d7-eb94-4056-9fe3-e13dca2f4e71") @map("user_id")
+  sessionName  String   @default("CS Lampung Cerdas 1") @map("session_name")
+  gatewayType  String   @default("WAHA") @map("gateway_type") // WAHA Gateway
+  apiUrl       String?  @map("api_url")
+  apiKey       String?  @map("api_key")
+  authUsername String?  @map("auth_username")
+  authPassword String?  @map("auth_password")
+  status       String   @default("CONNECTED") // SCAN_QR, CONNECTED, DISCONNECTED
+  qrCodeRaw    String?  @map("qr_code_raw")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("wa_sessions")
+}
+
+model Contact {
+  id                    Int       @id @default(autoincrement())
+  userId                String    @default("2dddb6d7-eb94-4056-9fe3-e13dca2f4e71") @map("user_id")
+  phoneNumber           String    @map("phone_number")
+  whatsappLid           String?   @map("whatsapp_lid") // WhatsApp Linked ID (@lid) from WAHA
+  customerName          String?   @map("customer_name")
+  schoolOrigin          String?   @map("school_origin")
+  targetCampusMajor     String?   @map("target_campus_major")
+  
+  // Legacy & Primary Status
+  leadStatus            String    @default("Cold") @map("lead_status") // Cold, Warm, Hot, Pending_Payment, Enrolled, Lost
+  handlingStatus        String    @default("AI_HANDLED") @map("handling_status") // AI_HANDLED, MANUAL_TAKEOVER
+  sentiment             String    @default("Neutral")
+
+  // New Structured Qualification & Telemetry Fields
+  leadStage             String    @default("NEW_LEAD") @map("lead_stage") // NEW_LEAD, DISCOVERY, QUALIFIED, CONSULTATION, VALUE_PRESENTED, PROOF, OFFER, OBJECTION, HOT_LEAD, PAYMENT_PENDING, PAID, FOLLOW_UP, HUMAN_HANDOFF, LOST
+  leadTemperature       String    @default("COLD") @map("lead_temperature") // COLD, WARM, HOT, VERY_HOT
+  leadScore             Int       @default(0) @map("lead_score")
+  persona               String    @default("UNKNOWN") @map("persona") // PEMBURU_AKSES_BIAYA, PENCARI_ARAH_MENTOR, OPTIMIZER_SNBP, BUTUH_BUKTI_KEPERCAYAAN, EKSPLORASI_UMUM, UNKNOWN
+  primaryGoal           String?   @map("primary_goal") // SNBP, BEASISWA, JURUSAN, or custom
+  primaryProblem        String?   @map("primary_problem")
+  primaryObjection      String?   @map("primary_objection") // PRICE, PARENT, TRUST, NOT_READY, COMPETITOR
+  intent                String?   @map("intent") // ASK_INFO, DISCOVERY, CONSULTATION, ASK_PRICE, ASK_BENEFIT, ASK_PROOF, OBJECTION, READY_TO_BUY, PAYMENT, COMPLAINT, FOLLOW_UP, OTHER
+  nextAction            String?   @map("next_action") // ASK_GOAL, ASK_GRADE, ASK_MAJOR, ASK_CAMPUS, ASK_FINANCIAL_NEED, ASK_OBJECTION, SEND_VALUE, SEND_PROOF, SEND_OFFER, SEND_REGISTRATION_LINK, SEND_PAYMENT, FOLLOW_UP, HANDOFF_HUMAN, CLOSE_CONVERSATION
+  followUpRequired      Boolean   @default(false) @map("follow_up_required")
+  followUpTime          DateTime? @map("follow_up_time")
+  proofNeeded           Boolean   @default(false) @map("proof_needed")
+  proofType             String?   @map("proof_type") // TESTIMONIAL, OUTPUT_SAMPLE, INSTITUTION_PROFILE, PROCESS, LEGALITY, OFFICE, SOCIAL_MEDIA, NEWS, NONE
+  offerReady            Boolean   @default(false) @map("offer_ready")
+  paymentReady          Boolean   @default(false) @map("payment_ready")
+  humanHandoff          Boolean   @default(false) @map("human_handoff")
+  handoffReason         String?   @map("handoff_reason")
+  needExternalData      Boolean   @default(false) @map("need_external_data")
+  missingData           String?   @map("missing_data") // JSON Array string
+  affiliateId           String?   @map("affiliate_id")
+
+  lastCustomerMessageAt DateTime? @map("last_customer_message_at")
+  lastInteractionAt     DateTime  @default(now()) @map("last_interaction_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  messages              Message[]
+
+  @@unique([userId, phoneNumber])
+  @@index([userId])
+  @@map("contacts")
+}
+
+model Message {
+  id            Int      @id @default(autoincrement())
+  contactId     Int      @map("contact_id")
+  contact       Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  wahaMessageId String?  @unique @map("waha_message_id")
+  senderType    String   @map("sender_type") // 'customer', 'ai', 'agent'
+  messageBody   String   @map("message_body")
+  isFollowUp    Boolean  @default(false) @map("is_follow_up")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("messages")
+}
+
+model FollowUpRule {
+  id                  Int      @id @default(autoincrement())
+  userId              String   @default("2dddb6d7-eb94-4056-9fe3-e13dca2f4e71") @map("user_id")
+  ruleName            String   @map("rule_name")
+  targetLeadStatus    String   @map("target_lead_status") // 'Cold', 'Warm', 'Hot', 'Pending_Payment'
+  inactivityHours     Int      @map("inactivity_hours") // Trigger inactivity in hours
+  aiPromptInstruction String   @map("ai_prompt_instruction")
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("follow_up_rules")
+}
+
+model AiConfiguration {
+  id              Int      @id @default(autoincrement())
+  userId          String   @unique @default("2dddb6d7-eb94-4056-9fe3-e13dca2f4e71") @map("user_id")
+  providerBaseUrl String   @default("https://api.openai.com/v1") @map("provider_base_url")
+  apiKey          String   @default("") @map("api_key_encrypted")
+  modelName       String   @default("gpt-4o-mini") @map("model_name")
+  temperature     Float    @default(0.6)
+  maxTokens       Int      @default(600) @map("max_tokens")
+  systemPrompt    String   @map("system_prompt")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("ai_configurations")
+}
+
+model KnowledgeDocument {
+  id        Int      @id @default(autoincrement())
+  userId    String   @default("2dddb6d7-eb94-4056-9fe3-e13dca2f4e71") @map("user_id")
+  title     String
+  category  String   @default("General") // 'Paket_Bimbel', 'Biaya', 'FAQ', 'Beasiswa'
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("knowledge_documents")
+}
+
+model BroadcastCampaign {
+  id           Int            @id @default(autoincrement())
+  userId       String         @default("2dddb6d7-eb94-4056-9fe3-e13dca2f4e71") @map("user_id")
+  title        String
+  message      String         @map("message")
+  totalGroups  Int            @default(0) @map("total_groups")
+  successCount Int            @default(0) @map("success_count")
+  failedCount  Int            @default(0) @map("failed_count")
+  status       String         @default("COMPLETED") // SENDING, COMPLETED, FAILED, PARTIAL
+  delaySeconds Int            @default(3) @map("delay_seconds")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  logs         BroadcastLog[]
+
+  @@index([userId])
+  @@map("broadcast_campaigns")
+}
+
+model BroadcastLog {
+  id           Int               @id @default(autoincrement())
+  campaignId   Int               @map("campaign_id")
+  campaign     BroadcastCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  groupJid     String            @map("group_jid")
+  groupName    String?           @map("group_name")
+  status       String            // SENT, FAILED
+  errorMessage String?           @map("error_message")
+  sentAt       DateTime          @default(now()) @map("sent_at")
+
+  @@index([campaignId])
+  @@map("broadcast_logs")
+}
+
