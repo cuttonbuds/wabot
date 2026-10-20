@@ -13,7 +13,6 @@ export async function updateSession(request: NextRequest) {
   const supabaseAnonKey =
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
     process.env.SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
     "";
 
   // If Supabase URL or Anon Key is missing or default placeholder, bypass gracefully
