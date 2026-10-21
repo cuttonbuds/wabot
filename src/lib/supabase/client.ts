@@ -1,23 +1,12 @@
 import { createBrowserClient } from "@supabase/ssr";
+import { getPublicEnv } from "@/lib/public-env";
 
 /**
- * Placeholder values used only when the real env vars are absent (for example
- * during `next build` on a CI/VPS without .env). Middleware and the login page
- * treat any URL containing "placeholder" as "Supabase not configured".
+ * Browser Supabase client. Reads URL and anon key from the runtime config
+ * injected by the root layout (see src/lib/public-env.ts), so the values set
+ * on the server at deploy time are used without rebuilding the bundle.
  */
-export const SUPABASE_PLACEHOLDER_URL = "https://placeholder.supabase.co";
-export const SUPABASE_PLACEHOLDER_ANON_KEY = "placeholder-anon-key";
-
 export function createClient() {
-  const supabaseUrl =
-    process.env.NEXT_PUBLIC_SUPABASE_URL ||
-    process.env.SUPABASE_URL ||
-    SUPABASE_PLACEHOLDER_URL;
-
-  const supabaseAnonKey =
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    SUPABASE_PLACEHOLDER_ANON_KEY;
-
+  const { supabaseUrl, supabaseAnonKey } = getPublicEnv();
   return createBrowserClient(supabaseUrl, supabaseAnonKey);
 }

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { isSupabaseConfigured } from "@/lib/public-env";
 import {
   Bot,
   Mail,
@@ -24,12 +25,11 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [isSupabaseConfigured, setIsSupabaseConfigured] = useState(true);
+  const [supabaseReady, setSupabaseReady] = useState(true);
 
   useEffect(() => {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    if (!url || url.includes("your-project-id") || url.includes("placeholder")) {
-      setIsSupabaseConfigured(false);
+    if (!isSupabaseConfigured()) {
+      setSupabaseReady(false);
     }
   }, []);
 
@@ -39,7 +39,7 @@ export default function LoginPage() {
     setSuccessMessage(null);
     setLoading(true);
 
-    if (!isSupabaseConfigured) {
+    if (!supabaseReady) {
       setTimeout(() => {
         setSuccessMessage("Mode Demo: Supabase URL belum diisi di .env. Mengarahkan ke Dashboard...");
         setTimeout(() => {
@@ -119,7 +119,7 @@ export default function LoginPage() {
         </div>
 
         {/* Not Configured Notice Banner */}
-        {!isSupabaseConfigured && (
+        {!supabaseReady && (
           <div className="p-3.5 sm:p-4 rounded-[16px] bg-amber-50 border border-amber-200 text-amber-900 text-[11.5px] sm:text-[12px] flex items-start gap-2.5">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
