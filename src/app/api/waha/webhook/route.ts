@@ -40,32 +40,30 @@ function verifyWahaHmac(rawRequestBody: string, req: NextRequest, key: string): 
  * Format WAHA: { event: 'message' | 'message.any', payload: { id, from, body, hasMedia, type, fromMe, _data: { notifyName } } }
  *
  * Security:
- * - Request body is authenticated via HMAC-SHA512 (WAHA_WEBHOOK_HMAC_KEY).
+ * - Request body is authenticated via HMAC-SHA512 when WAHA_WEBHOOK_HMAC_KEY is set;
+ *   with an empty key the webhook is accepted unverified (logged as a warning).
  * - Tenant is resolved ONLY from the (verified) session name; any `userId` in query/body is ignored.
  */
 export async function POST(req: NextRequest) {
   try {
     const hmacKey = process.env.WAHA_WEBHOOK_HMAC_KEY?.trim();
-    if (!hmacKey) {
-      console.error("[Webhook] WAHA_WEBHOOK_HMAC_KEY belum diset. Webhook ditolak.");
-      return NextResponse.json(
-        {
-          error: "Webhook Not Configured",
-          message:
-            "WAHA_WEBHOOK_HMAC_KEY belum dikonfigurasi di server. Set environment variable ini dan daftarkan ulang webhook di WAHA dengan hmac.key yang sama.",
-        },
-        { status: 503 }
-      );
-    }
 
     // Read the RAW body first; the HMAC is computed over the exact bytes WAHA sent.
     const rawRequestBody = await req.text();
 
-    if (!verifyWahaHmac(rawRequestBody, req, hmacKey)) {
-      console.warn("[Webhook] Signature HMAC tidak valid atau tidak ada. Request ditolak.");
-      return NextResponse.json(
-        { error: "Unauthorized", message: "Invalid webhook signature." },
-        { status: 401 }
+    if (hmacKey) {
+      if (!verifyWahaHmac(rawRequestBody, req, hmacKey)) {
+        console.warn("[Webhook] Signature HMAC tidak valid atau tidak ada. Request ditolak.");
+        return NextResponse.json(
+          { error: "Unauthorized", message: "Invalid webhook signature." },
+          { status: 401 }
+        );
+      }
+    } else {
+      // HMAC verification is optional. Without a key anyone who knows the
+      // webhook URL can inject messages; set WAHA_WEBHOOK_HMAC_KEY to enforce.
+      console.warn(
+        "[Webhook] WAHA_WEBHOOK_HMAC_KEY kosong: request diterima TANPA verifikasi tanda tangan."
       );
     }
 

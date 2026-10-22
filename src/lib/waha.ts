@@ -85,7 +85,7 @@ export function buildWebhookConfig(
   const hmacKey = getWebhookHmacKey();
   if (!hmacKey) {
     console.warn(
-      "[WAHA] WAHA_WEBHOOK_HMAC_KEY belum diset. Webhook akan didaftarkan TANPA hmac dan akan ditolak oleh /api/waha/webhook."
+      "[WAHA] WAHA_WEBHOOK_HMAC_KEY kosong. Webhook didaftarkan tanpa hmac; /api/waha/webhook menerima request tanpa verifikasi."
     );
   }
 
@@ -320,14 +320,8 @@ export async function syncWahaWebhookConfig(
 ): Promise<{ updated: boolean; error?: string }> {
   const cleanSession = session.trim();
 
-  if (!getWebhookHmacKey()) {
-    // Without a key in env a PUT would wipe whatever key is stored in WAHA.
-    console.warn(
-      `[WAHA] WAHA_WEBHOOK_HMAC_KEY belum diset; sinkronisasi webhook sesi '${cleanSession}' dilewati agar key di WAHA tidak terhapus.`
-    );
-    return { updated: false, error: "WAHA_WEBHOOK_HMAC_KEY belum diset di env wabot" };
-  }
-
+  // Without an env key only the URL and "message" event are enforced; any
+  // hmac block already stored on the session is passed through untouched.
   const info = sessionInfo ?? (await getWahaSession(cleanSession));
   if (!info) return { updated: false, error: "Session not found in WAHA" };
 
