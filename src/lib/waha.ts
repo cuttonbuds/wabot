@@ -74,19 +74,36 @@ export function buildWebhookUrl(
  * Builds the webhook config entry registered on a WAHA session, including the HMAC key
  * so that WAHA signs every delivery (X-Webhook-Hmac / X-Webhook-Hmac-Algorithm).
  */
-export function buildWebhookConfig(webhookUrl: string): Record<string, any> {
-  const hmacKey = process.env.WAHA_WEBHOOK_HMAC_KEY?.trim();
+export function getWebhookHmacKey(): string | null {
+  return process.env.WAHA_WEBHOOK_HMAC_KEY?.trim() || null;
+}
+
+export function buildWebhookConfig(
+  webhookUrl: string,
+  existing?: Record<string, any> | null
+): Record<string, any> {
+  const hmacKey = getWebhookHmacKey();
   if (!hmacKey) {
     console.warn(
       "[WAHA] WAHA_WEBHOOK_HMAC_KEY belum diset. Webhook akan didaftarkan TANPA hmac dan akan ditolak oleh /api/waha/webhook."
     );
   }
+
+  // Start from the entry already stored on the session (if any) so settings
+  // made by hand in the WAHA dashboard, such as retries or extra events, are
+  // kept. Only url, the "message" event and the HMAC key are enforced.
+  const existingEvents: string[] = Array.isArray(existing?.events) ? existing!.events : [];
+  const events = existingEvents.includes("message")
+    ? existingEvents
+    : [...existingEvents, "message"];
+
   const entry: Record<string, any> = {
+    ...(existing || {}),
     url: webhookUrl,
-    events: ["message"],
+    events,
   };
   if (hmacKey) {
-    entry.hmac = { key: hmacKey };
+    entry.hmac = { ...(existing?.hmac || {}), key: hmacKey };
   }
   return entry;
 }
@@ -228,16 +245,29 @@ export function isWahaWebhookConfigSynced(sessionInfo: any, webhookUrl: string):
   if (webhooks.length !== 1) return false;
 
   const existing = webhooks[0];
-  const expected = buildWebhookConfig(webhookUrl);
-
-  if (existing?.url !== expected.url) return false;
+  if (existing?.url !== webhookUrl) return false;
 
   const events: string[] = Array.isArray(existing?.events) ? existing.events : [];
   if (!events.includes("message")) return false;
 
-  const expectedKey = expected.hmac?.key || null;
-  const existingKey = existing?.hmac?.key || null;
-  return expectedKey === existingKey;
+  const expectedKey = getWebhookHmacKey();
+  if (!expectedKey) {
+    // Nothing to enforce; never treat a missing env key as a reason to PUT.
+    return true;
+  }
+
+  const existingHmac = existing?.hmac;
+  if (!existingHmac) return false;
+
+  const existingKey = typeof existingHmac.key === "string" ? existingHmac.key.trim() : "";
+  if (!existingKey) {
+    // WAHA stores a key but does not necessarily return it on GET. An hmac
+    // block with no readable key is assumed to be in sync; a wrong key is
+    // surfaced by the webhook route's 401 log instead.
+    return true;
+  }
+
+  return existingKey === expectedKey;
 }
 
 /**
@@ -250,7 +280,8 @@ export function isWahaWebhookConfigSynced(sessionInfo: any, webhookUrl: string):
  */
 export async function updateWahaSessionWebhook(
   session: string,
-  webhookUrl: string
+  webhookUrl: string,
+  existingWebhook?: Record<string, any> | null
 ): Promise<{ success: boolean; error?: string }> {
   const cleanSession = encodeURIComponent(session.trim());
   try {
@@ -258,7 +289,7 @@ export async function updateWahaSessionWebhook(
       method: "PUT",
       headers: getWahaHeaders(),
       body: JSON.stringify({
-        config: { webhooks: [buildWebhookConfig(webhookUrl)] },
+        config: { webhooks: [buildWebhookConfig(webhookUrl, existingWebhook)] },
       }),
       signal: AbortSignal.timeout(15000),
     });
@@ -288,6 +319,15 @@ export async function syncWahaWebhookConfig(
   sessionInfo?: any
 ): Promise<{ updated: boolean; error?: string }> {
   const cleanSession = session.trim();
+
+  if (!getWebhookHmacKey()) {
+    // Without a key in env a PUT would wipe whatever key is stored in WAHA.
+    console.warn(
+      `[WAHA] WAHA_WEBHOOK_HMAC_KEY belum diset; sinkronisasi webhook sesi '${cleanSession}' dilewati agar key di WAHA tidak terhapus.`
+    );
+    return { updated: false, error: "WAHA_WEBHOOK_HMAC_KEY belum diset di env wabot" };
+  }
+
   const info = sessionInfo ?? (await getWahaSession(cleanSession));
   if (!info) return { updated: false, error: "Session not found in WAHA" };
 
@@ -295,8 +335,11 @@ export async function syncWahaWebhookConfig(
     return { updated: false };
   }
 
+  const existingWebhooks: any[] = Array.isArray(info?.config?.webhooks) ? info.config.webhooks : [];
+  const existingWebhook = existingWebhooks[0] || null;
+
   console.log(`[WAHA] Webhook config sesi '${cleanSession}' berbeda dengan env. Menyinkronkan via PUT /api/sessions...`);
-  const res = await updateWahaSessionWebhook(cleanSession, webhookUrl);
+  const res = await updateWahaSessionWebhook(cleanSession, webhookUrl, existingWebhook);
   return { updated: res.success, error: res.error };
 }
 
