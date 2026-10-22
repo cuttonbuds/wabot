@@ -9,6 +9,7 @@ import {
   restartWahaSession,
   createWahaSession,
   ensureWahaSession,
+  syncWahaWebhookConfig,
   getWahaHeaders,
   buildWebhookUrl,
 } from "@/lib/waha";
@@ -207,6 +208,7 @@ export async function POST(req: NextRequest) {
     // DISPATCH ACTIONS TO WAHA
     // ==========================================
     const webhookUrl = buildWebhookUrl(targetSession, user!.id, req);
+    let webhookSyncNote = "";
 
     if (action === "create" || action === "register") {
       const createRes = await createWahaSession(targetSession, webhookUrl);
@@ -219,6 +221,11 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       }
+
+      // createWahaSession treats "already exists" as success; make sure such a
+      // pre-existing session gets the current webhook URL + HMAC key.
+      const sync = await syncWahaWebhookConfig(targetSession, webhookUrl);
+      if (sync.updated) webhookSyncNote = " Webhook & HMAC key diperbarui di WAHA.";
 
       await startWahaSession(targetSession);
       await new Promise((r) => setTimeout(r, 1200));
@@ -235,7 +242,8 @@ export async function POST(req: NextRequest) {
         responseMsg = `Sesi Anda '${targetSession}' berhasil dibuat di WAHA. Silakan scan QR code.`;
       }
     } else if (action === "start") {
-      await ensureWahaSession(targetSession, webhookUrl);
+      const ensured = await ensureWahaSession(targetSession, webhookUrl, { syncWebhook: true });
+      if (ensured.webhookUpdated) webhookSyncNote = " Webhook & HMAC key diperbarui di WAHA.";
       await startWahaSession(targetSession);
       await new Promise((r) => setTimeout(r, 800));
 
@@ -251,8 +259,14 @@ export async function POST(req: NextRequest) {
         responseMsg = `Sesi bot Anda (${targetSession}) dimulai. Silakan scan QR code.`;
       }
     } else if (action === "restart") {
-      await ensureWahaSession(targetSession, webhookUrl);
-      await restartWahaSession(targetSession);
+      const ensured = await ensureWahaSession(targetSession, webhookUrl, { syncWebhook: true });
+      if (ensured.webhookUpdated) {
+        // PUT /api/sessions already stopped and restarted the session with the
+        // new webhook config; a second restart would only add downtime.
+        webhookSyncNote = " Webhook & HMAC key diperbarui di WAHA.";
+      } else {
+        await restartWahaSession(targetSession);
+      }
       await new Promise((r) => setTimeout(r, 1200));
 
       meInfo = await getWahaMe(targetSession);
@@ -272,7 +286,8 @@ export async function POST(req: NextRequest) {
       qrCodeRaw = null;
       responseMsg = `Sesi bot Anda (${targetSession}) berhasil dihentikan.`;
     } else if (action === "qr") {
-      await ensureWahaSession(targetSession, webhookUrl);
+      const ensured = await ensureWahaSession(targetSession, webhookUrl, { syncWebhook: true });
+      if (ensured.webhookUpdated) webhookSyncNote = " Webhook & HMAC key diperbarui di WAHA.";
       meInfo = await getWahaMe(targetSession);
       if (meInfo) {
         newStatus = "CONNECTED";
@@ -319,7 +334,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: responseMsg,
+      message: responseMsg + webhookSyncNote,
       session,
       me: meInfo,
       qr: qrCodeRaw,

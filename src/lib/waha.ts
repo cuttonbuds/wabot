@@ -218,16 +218,104 @@ export async function createWahaSession(
 }
 
 /**
+ * Checks whether the webhook config stored on a WAHA session already matches
+ * what this app would register (same URL, "message" event, same HMAC key).
+ */
+export function isWahaWebhookConfigSynced(sessionInfo: any, webhookUrl: string): boolean {
+  const webhooks: any[] = Array.isArray(sessionInfo?.config?.webhooks)
+    ? sessionInfo.config.webhooks
+    : [];
+  if (webhooks.length !== 1) return false;
+
+  const existing = webhooks[0];
+  const expected = buildWebhookConfig(webhookUrl);
+
+  if (existing?.url !== expected.url) return false;
+
+  const events: string[] = Array.isArray(existing?.events) ? existing.events : [];
+  if (!events.includes("message")) return false;
+
+  const expectedKey = expected.hmac?.key || null;
+  const existingKey = existing?.hmac?.key || null;
+  return expectedKey === existingKey;
+}
+
+/**
+ * Update webhook config of an existing session.
+ * PUT /api/sessions/{session}
+ * Body: { "config": { "webhooks": [...] } }
+ *
+ * WAHA stops, updates and restarts a running session on PUT, so callers must
+ * only invoke this from explicit user actions, never from status polling.
+ */
+export async function updateWahaSessionWebhook(
+  session: string,
+  webhookUrl: string
+): Promise<{ success: boolean; error?: string }> {
+  const cleanSession = encodeURIComponent(session.trim());
+  try {
+    const res = await fetch(`${DEFAULT_WAHA_URL}/api/sessions/${cleanSession}`, {
+      method: "PUT",
+      headers: getWahaHeaders(),
+      body: JSON.stringify({
+        config: { webhooks: [buildWebhookConfig(webhookUrl)] },
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (res.ok) return { success: true };
+
+    const data = await res.json().catch(() => null);
+    const message = Array.isArray(data?.message)
+      ? data.message.join("; ")
+      : data?.message || `HTTP ${res.status}`;
+    console.warn(`[WAHA] updateWahaSessionWebhook '${session}' failed: ${message}`);
+    return { success: false, error: message };
+  } catch (err: any) {
+    console.warn(`[WAHA] updateWahaSessionWebhook error: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Makes sure the webhook (URL + HMAC key) registered on a WAHA session matches
+ * this app's env. Only issues a PUT when something differs.
+ * Returns whether a PUT was performed (which restarts the session in WAHA).
+ */
+export async function syncWahaWebhookConfig(
+  session: string,
+  webhookUrl: string,
+  sessionInfo?: any
+): Promise<{ updated: boolean; error?: string }> {
+  const cleanSession = session.trim();
+  const info = sessionInfo ?? (await getWahaSession(cleanSession));
+  if (!info) return { updated: false, error: "Session not found in WAHA" };
+
+  if (isWahaWebhookConfigSynced(info, webhookUrl)) {
+    return { updated: false };
+  }
+
+  console.log(`[WAHA] Webhook config sesi '${cleanSession}' berbeda dengan env. Menyinkronkan via PUT /api/sessions...`);
+  const res = await updateWahaSessionWebhook(cleanSession, webhookUrl);
+  return { updated: res.success, error: res.error };
+}
+
+/**
  * Pastikan session terdaftar di WAHA.
  * Jika belum terdaftar, buat sesi baru dengan:
  * POST /api/sessions
  * Body: { "name": "{{name_session}}" }
  * dan jalankan startWahaSession.
+ *
+ * Dengan `syncWebhook: true`, sesi yang sudah ada juga diperiksa dan webhook
+ * (URL + HMAC key) disamakan dengan env lewat PUT. Jangan aktifkan dari polling
+ * status karena PUT me-restart sesi yang sedang berjalan.
  */
 export async function ensureWahaSession(
   session: string = DEFAULT_SESSION,
-  webhookUrl?: string
-): Promise<{ created: boolean; info: any | null }> {
+  webhookUrl?: string,
+  options?: { syncWebhook?: boolean }
+): Promise<{ created: boolean; webhookUpdated: boolean; info: any | null }> {
   const cleanSession = session.trim();
   let info = await getWahaSession(cleanSession);
 
@@ -240,11 +328,22 @@ export async function ensureWahaSession(
       await startWahaSession(cleanSession);
       await new Promise((r) => setTimeout(r, 1200));
       info = await getWahaSession(cleanSession);
-      return { created: true, info };
+      return { created: true, webhookUpdated: false, info };
+    }
+    return { created: false, webhookUpdated: false, info: null };
+  }
+
+  let webhookUpdated = false;
+  if (options?.syncWebhook && webhookUrl) {
+    const sync = await syncWahaWebhookConfig(cleanSession, webhookUrl, info);
+    webhookUpdated = sync.updated;
+    if (webhookUpdated) {
+      await new Promise((r) => setTimeout(r, 1500));
+      info = await getWahaSession(cleanSession);
     }
   }
 
-  return { created: false, info };
+  return { created: false, webhookUpdated, info };
 }
 
 /**
